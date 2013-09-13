@@ -1,0 +1,7 @@
+build/
+*.swo
+*.swp
+*.pyc
+*.c
+*.so
+tests/ATRIAL_*
