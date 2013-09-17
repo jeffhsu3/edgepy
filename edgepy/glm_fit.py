@@ -210,6 +210,7 @@ def mlstsqs(design_matrix, my):
     out = np.zeros((my.shape[0], design_matrix.shape[1]), dtype=np.double)
 
     for i in range(ny):
+        
         out[i, :] = lstsq(design_matrix, my[i,:])[0]
 
     return out
