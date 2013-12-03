@@ -17,7 +17,9 @@ class DGE_eQTL(DGEList):
 
     def __init__(self, counts, design_matrix=None, genes=None,
             genotypes=None):
-        """
+        """ Merges genotyping data with expression data so that only common
+        samples are used.
+
 
         Parameters
         ----------
@@ -43,8 +45,8 @@ class DGE_eQTL(DGEList):
         """
         common = [i for i in self.counts.columns if i in genotypes.columns]
         self.genotypes = genotypes.ix[:, common]
+        pass
 
-        self.
 
         # recalculate 
 

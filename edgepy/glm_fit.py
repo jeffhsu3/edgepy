@@ -18,7 +18,9 @@ from numba.decorators import autojit
 #from scipy.linalg.fblas import dgemm
 from numpy.linalg import lstsq
 from numpy.linalg import matrix_rank
+from numpy.linalg import qr
 from statsmodels.genmod.families.links import log
+from .glm_fit_numba import *
 
 
 def glm_fit(y, design, dispersion, offset=None, weights=None, lib_size=None,
@@ -40,7 +42,7 @@ def glm_fit(y, design, dispersion, offset=None, weights=None, lib_size=None,
 
     See Also
     --------
-    mglm_simple, mglm_levenberg
+    mglm_simple, mglm_levenberg, mrlm
     """
     rank = matrix_rank(design)
     isna = any(np.isnan(y))
@@ -68,19 +70,71 @@ def glm_fit(y, design, dispersion, offset=None, weights=None, lib_size=None,
     return fit
 
 
+def mrlm(M, design, ndups=1):
+    """ Robustly fit a linear model for each gene to a series of data.
+
+    Parameters:
+    ----------
+    M : Observation matrix with different tests as rows
+    design : design dataframe
+    ndups : number of duplicate tests
+
+    Returns:
+    -------
+
+    Citation
+    """
+
+    M = M.as_matrix()
+    n_tests = M.shape[0]
+    n_samples = M.shape[1]
+    n_col = design.shape[1]
+
+    stdev_unscaled = np.empty((n_tests, n_col), dtype=np.double)
+    beta = np.empty((n_tests, n_col), dtype=np.double)
+    sigma = np.empty(n_tests)
+    df_residual = np.zeros(n_tests, dtype=np.double)
+
+    design = design.as_matrix()
+    out = {}
+
+    for i in xrange(n_tests):
+        y = M[i, :]
+        obs = np.isfinite(y)
+        X = design[obs, :]
+        y = y[obs]
+        if len(y) > n_col:
+            out = sm.RLM(y, X).fit()
+            beta[i, :] = out.params
+            df_residual[i] = out.df_resid
+            #stdev_unscaled[i, :] = np.sqrt(out.exog_q.qr.diagonal)
+            if df_residual[i] > 0:
+                #sigma[i] = out.sigma
+                pass
+            else: pass
+    q, r = np.qr(design)
+
+    out['coefs'] = beta
+    out['stdev_unscaled'] = stdev_unscaled
+    out['df_residual'] = df_residual
+    return(out)
+
+
+
+
 def mglm_simple(y, design, dispersion=0, offset=0, weights=None):
     """ 
     Fit negative binomial glm with calls to statsmodels glm.fit().
 
     Parameters
     ----------
-    y: digital count matrix
-    design: design dataframe or matrix
-    dispersion: dispersion estimate
-    offset: offset array 
-    weights: weights array
+    y : digital count matrix
+    design : design dataframe or matrix
+    dispersion : dispersion estimate
+    offset : offset array 
+    weights : weights array
 
-    Returns
+    Returns:
     -------
 
     Notes
@@ -106,7 +160,6 @@ def mglm_simple(y, design, dispersion=0, offset=0, weights=None):
 
     offset = expand_as_matrix(offset, y.shape)
         
-
     # Setting the glm family
     if len(dispersion) > 1:
         common_family = False
@@ -139,10 +192,20 @@ def mglm_simple(y, design, dispersion=0, offset=0, weights=None):
             pvalues[i, :] = output.pvalues
         else: pass
 
-
     return(coefficients, fitted_values, df_residual, dev, pvalues)
 
 
+def mglm_line_search(y, design, dispersion=0, offset=0, coef_start=None):
+    """ Multiple 
+    """
+    X = design.as_matrix()
+    #ncoef = X.shape[1]
+    #ntags = y.shape[0]
+    #nsamps = y.shape[1]
+    offset = expand_as_matrix(offset, y.shape)
+    # Orthnormal transform of design matrix
+    q, r = qr(X)
+    X = qr.Q(q, r)
 
 
 
@@ -181,39 +244,6 @@ def mglm_Levenberg(y, design, dispersion=0, offset=0, coef_start=None,
     pass
 
 
-@autojit()    
-def mglm_Levenberg_numba(counts, dispersion, offset, beta, 
-        fitted, tol, maxit):
-    """Numba implementation of Levenberg algorithm
-    """
-    ntags = counts.shape[0]
-    nsamples = counts.shape[1]
-    out = np.zeros((ntags,nsamples))
-
-    for tag in range(ntags):
-        pass
-
-
-@autojit()
-def mlstsqs(design_matrix, my):
-    """ Fits multiple ordinary linear models to the same endogenous variable.
-
-    Parameters
-    ---------
-    design_matrix: the design matrix
-    my: a matrix containing 
-
-    Returns 
-    A matrix containing only the coefficients.
-    """
-    ny = my.shape[0]
-    out = np.zeros((my.shape[0], design_matrix.shape[1]), dtype=np.double)
-
-    for i in range(ny):
-        
-        out[i, :] = lstsq(design_matrix, my[i,:])[0]
-
-    return out
 
 
 def mismatch_addition(array, b):
@@ -240,104 +270,6 @@ def expand_as_matrix(x, dim):
 
 
 
-@jit
-class GLM_Levenberg(object):
-    """ At the moment the design array needs to be an int
-    """
-
-    @void(int_, int_, double[:], int_)
-    def __init__(self, nlibs, ncoefs, design, maxit):
-        # Hmmm the cpp is treating design as one-dimensions
-        self.nlibs = nlibs
-        self.ncoefs = ncoefs
-        self.maxit = maxit
-        self.len_ = nlibs * ncoefs
-        self.design = design
-        self.d = np.zeros(self.len_, dtype=np.double)
-        #self.wx = np.zeros(len_, dtype=np.double)
-        self.xwx = np.zeros(ncoefs*ncoefs, dtype=np.double)
-        self.xwx_copy = np.zeros(ncoefs*ncoefs, dtype=np.double)
-        self.dl = np.zeros(ncoefs, dtype=np.double)
-        self.dbeta = np.zeros(ncoefs, dtype=np.double)
-        self.mu_new = np.zeros(nlibs, dtype=np.double)
-        self.beta_new = np.zeros(ncoefs, dtype=np.double)
-
-
-    '''
-    @void(double[:], double[:], double[:], double[:], double[:])
-    def fit(self, offset, y, disp, mu, beta):
-        """Fit the nbinom glm. 
-        """
-        low_value = 10e-6
-        ymax = np.max(y)
-        if ymax < low_value:
-            mu = np.zeros(self.nlibs)
-            for coef in range(self.ncoefs): beta[coef] = np.nan
-        wx = np.zeros(self.len_, dtype=np.double)
-
-        dev = self.nb_deviance(y, mu, disp)
-        max_info = -1
-        lambda_ = 0
-        for iter_ in range(self.maxit):
-            # Reset DL
-            for i in range(self.ncoefs): self.dl[i]=0
-            for row in range(self.nlibs):
-                cur_mu = mu[row]
-                denom = 1+cur_mu * disp
-                weight = cur_mu/denom 
-                deriv = (y[row] - cur_mu)/denom
-                for col in xrange(self.ncoefs):
-                    # cur_idx = the current index of flattened design array
-                    cur_idx = col*self.nlibs + row
-                    self.wx[cur_idx] = self.design[cur_idx] * weight
-                    self.dl[col] = self.design[cur_idx] * deriv
-                xwx = dgemm(alpha=1.0, a=self.design, b=wx)
-
-            for i in range(self.ncoefs):
-                cur_val = xwx[i * self.ncoefs + i]
-                #if cur_val > max_info: max_info = cur_val
-            
-
-            if iter == 1:
-                #lambda_ = max_info * 1e-6
-                #if lambda_ < 1e-13: lambda_ = 1e-13
-                pass
-
-            lev = 0
-            low_dev = False
-
-            # Create an iterator
-
-            while True:
-                lev += 1
-                # Copy dl to dlbeta
-                break
-
-    '''
-
-    @double(double[:], double[:], double[:])
-    def nb_deviance(self, y, mu, phi):
-        """ Calculate negative binomial deviance.
-
-        """
-        low_value = np.power(10, -8)
-        one_millionth = np.power(10, -6)
-        one_million = np.power(10, 6)
-        dev = 0
-        for i in xrange(self.nlibs):
-            cur_y = y[i] if y[i] > low_value else low_value
-            cur_mu = mu[i] if mu[i] > low_value else low_value
-            product = cur_mu * cur_y
-            # Poisson distribution for small values, gamma for very large
-            # values and nbinom for everything else
-            if product < one_millionth:
-                dev += cur_y * np.log(cur_y/cur_mu) - (cur_y - cur_mu)
-            elif product > one_million:
-                dev += (cur_y - cur_mu)/cur_mu - np.log(cur_y/mu)
-            else:
-                dev += cur_y * np.log(cur_y/cur_mu) + (cur_y + 1/phi) *\
-                        np.log((cur_mu+1/phi)/(cur_y+1/phi))
-        return dev * 2
 
 
 
@@ -350,4 +282,58 @@ def glm_lrt(glm_fit, coef, contrast=None, test='chisq'):
     Returns
     -------
     """
+    pass
+
+
+
+def voom(DGEList, design=None, lib_size=None):
+    """ limma Voom
+
+    Parameters
+    ----------
+    counts : DGEList or count matrix
+    design : if counts is not a DGEList or object with design attribute. 
+    lib_size:  if counts is not a DGEList or object with lib_size
+
+    Returns
+    -------
+
+    Citation
+    --------
+
+    """
+    out = {}
+
+    if not lib_size or DGEList.samples['lib_size']:
+        try:
+            lib_size = DGEList.counts.sum(axis=0)
+        except AttributeError:
+            pass
+
+    #y = normalize_between_samples(y)
+    y = (np.log2((DGEList.counts + 0.5).T/(lib_size + 1) * 1e6)).T
+    fit = lm_fit(y, DGEList.design)
+    sx = fit.Amean  
+    sy = np.sqrt(fit.sigma)
+
+
+
+
+    return out
+
+
+def matrix_eQTL():
+    """ Specialize function for doing someithing similar to what matrix eQTL
+    does
+
+    Parameters
+    ----------
+
+    Returns
+    -------
+
+    Citation
+    --------
+    """
+
     pass

@@ -30,11 +30,14 @@ cmdclass = {}
 ext_modules = []
 
 if use_cython:
+
     print('using cython')
+    """
     ext_modules = cythonize('edgepy/glm_levenberg.pyx', 
             sources=['src/glm_levenberg.cpp'], 
             language='c++')
     cmdclass.update({'build_ext': build_ext})
+    """
 else:
     pass
 

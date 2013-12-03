@@ -21,11 +21,11 @@ import norm_functions as nf
 import cond_log_lik as ccl
 from cut_with_min_N import cut_with_min_N
 #from numpy.ma import masked_array
-from bspline import bsplvander
+#from bspline import bsplvander
 from statsmodels.tools.tools import add_constant
 # Try import from both biopython and statsmodels
 from statsmodels.nonparametric.smoothers_lowess import lowess
-from edgepy.glm_fit import glm_fit
+from .glm_fit import glm_fit
 
 
 def norm_factor(matrix):
@@ -160,7 +160,7 @@ class DGEList(object):
             #f = interp1d(log_cpm_bins[ind], fit, s=0)
             #dispersion = f(self.avg_log_cpmn)
             raise NotImplemented
-            test = bsplvander(log_cpm_bins,  knots , df-1)
+            #test = bsplvander(log_cpm_bins,  knots , df-1)
 
         elif method == 'bin_loess':
             # Need to be done else interpertation range is mucked up
